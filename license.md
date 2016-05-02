@@ -1,6 +1,6 @@
 # License
-
-Copyright (c) 2014-2016 Marc-Olivier Schwartz
+I take very little if any credit for this code.
+Original code is Copyright (c) 2014-2016 Marc-Olivier Schwartz
 
 All rights reserved.
 

@@ -1,16 +1,16 @@
 /*
-  This a simple example of the aREST Library for the ESP8266 WiFi chip.
+  This a simple example of the e(a)REST Library for the ESP8266 WiFi chip.
   See the README file for more details.
 
-  Written in 2015 by Marco Schwartz under a GPL license.
+  Written in 2015 by Marco Schwartz under a GPL license. and completly ripped off by xnakxx
 */
 
 // Import required libraries
 #include <ESP8266WiFi.h>
-#include <aREST.h>
+#include <eREST.h>
 
 // Create aREST instance
-aREST rest = aREST();
+eREST rest = eREST();
 
 // WiFi parameters
 const char* ssid = "your_wifi_network_name";

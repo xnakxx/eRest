@@ -1,14 +1,16 @@
 /*
-  aREST Library for Arduino
+  eREST Library for Arduino
+  totally copied from Marco Schwartz's aRest lib
   See the README file for more details.
 
-  Written in 2014 by Marco Schwartz.
+  Written in 2014 by Marco Schwartz. modified by xnakxx 2016
 
   This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License:
   http://creativecommons.org/licenses/by-sa/4.0/
-
-  Version 2.2.0
-  Changelog:
+  Version 0.1
+  
+  aRest Version 2.2.0
+   Original Changelog:
 
   Version 2.2.0: Added compatibility with the Arduino MKR1000 board
   Version 2.1.2: Added data about hardware type in JSON answer
@@ -50,8 +52,8 @@
   Version 1.0: First working version of the library
 */
 
-#ifndef aRest_h
-#define aRest_h
+#ifndef eRest_h
+#define eRest_h
 
 // Include Arduino header
 #include "Arduino.h"
@@ -126,11 +128,11 @@
   #endif
 #endif
 
-class aREST {
+class eREST {
 
 public:
 
-aREST() {
+eREST() {
 
   command = 'u';
   pin_selected = false;
@@ -140,7 +142,7 @@ aREST() {
 
 }
 
-aREST(char* rest_remote_server, int rest_port) {
+eREST(char* rest_remote_server, int rest_port) {
 
   command = 'u';
   pin_selected = false;
@@ -162,7 +164,7 @@ aREST(char* rest_remote_server, int rest_port) {
 #if defined(PubSubClient_h)
 
 // With default server
-aREST(PubSubClient& client) {
+eREST(PubSubClient& client) {
 
   command = 'u';
   pin_selected = false;
@@ -175,7 +177,7 @@ aREST(PubSubClient& client) {
 }
 
 // With another server
-aREST(PubSubClient& client, char* new_mqtt_server) {
+eREST(PubSubClient& client, char* new_mqtt_server) {
 
   command = 'u';
   pin_selected = false;
@@ -655,12 +657,12 @@ void handle_callback(PubSubClient& client, char* topic, byte* payload, unsigned 
     Serial.println(msgString);
   }
 
-  // Process aREST commands
+  // Process eREST commands
     String modified_message = String(msgString) + " /";
     char char_message[100];
     modified_message.toCharArray(char_message, 100);
 
-    // Handle command with aREST
+    // Handle command with eREST
     handle(char_message);
 
     // Read answer

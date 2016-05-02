@@ -1,4 +1,5 @@
-<h1>aREST</h1>
+<h1>eREST</h1>
+<h3>A rip off of aRest</h3>
 
 ## Overview
 

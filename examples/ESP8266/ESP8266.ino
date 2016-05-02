@@ -9,7 +9,7 @@
 #include <ESP8266WiFi.h>
 #include <eREST.h>
 
-// Create aREST instance
+// Create eREST instance
 eREST rest = eREST();
 
 // WiFi parameters

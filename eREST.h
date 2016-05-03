@@ -1,16 +1,14 @@
 /*
-  eREST Library for Arduino
-  totally copied from Marco Schwartz's aRest lib
+  aREST Library for Arduino
   See the README file for more details.
 
-  Written in 2014 by Marco Schwartz. modified by xnakxx 2016
+  Written in 2014 by Marco Schwartz.
 
   This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License:
   http://creativecommons.org/licenses/by-sa/4.0/
-  Version 0.1
-  
-  aRest Version 2.2.0
-   Original Changelog:
+
+  Version 2.2.0
+  Changelog:
 
   Version 2.2.0: Added compatibility with the Arduino MKR1000 board
   Version 2.1.2: Added data about hardware type in JSON answer
@@ -58,16 +56,28 @@
 // Include Arduino header
 #include "Arduino.h"
 
+// MQTT packet size
+#undef MQTT_MAX_PACKET_SIZE
+#define MQTT_MAX_PACKET_SIZE 512
+
 // Using ESP8266 ?
 #if defined(ESP8266)
 #include "stdlib_noniso.h"
 #endif
 
 // Which board?
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266)
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(CORE_WILDFIRE) || defined(ESP8266)
 #define NUMBER_ANALOG_PINS 16
 #define NUMBER_DIGITAL_PINS 54
 #define OUTPUT_BUFFER_SIZE 2000
+#elif defined(__AVR_ATmega328P__) && !defined(ADAFRUIT_CC3000_H)
+#define NUMBER_ANALOG_PINS 6
+#define NUMBER_DIGITAL_PINS 14
+#define OUTPUT_BUFFER_SIZE 350
+#elif defined(ADAFRUIT_CC3000_H)
+#define NUMBER_ANALOG_PINS 6
+#define NUMBER_DIGITAL_PINS 14
+#define OUTPUT_BUFFER_SIZE 275
 #else
 #define NUMBER_ANALOG_PINS 6
 #define NUMBER_DIGITAL_PINS 14
@@ -85,14 +95,22 @@
 #define NAME_SIZE 20
 #define ID_SIZE 10
 
+// Subscriptions
+#define NUMBER_SUBSCRIPTIONS 4
+
 // Debug mode
 #ifndef DEBUG_MODE
 #define DEBUG_MODE 0
 #endif
 
+// Use light answer mode
+#ifndef LIGHTWEIGHT
+#define LIGHTWEIGHT 0
+#endif
+
 // Default number of max. exposed variables
 #ifndef NUMBER_VARIABLES
-  #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266)
+  #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(CORE_WILDFIRE) || defined(ESP8266) || !defined(ADAFRUIT_CC3000_H)
   #define NUMBER_VARIABLES 10
   #else
   #define NUMBER_VARIABLES 5
@@ -101,7 +119,7 @@
 
 // Default number of max. exposed functions
 #ifndef NUMBER_FUNCTIONS
-  #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266)
+  #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(CORE_WILDFIRE) || defined(ESP8266)
   #define NUMBER_FUNCTIONS 10
   #else
   #define NUMBER_FUNCTIONS 5
@@ -134,6 +152,90 @@ eREST(char* rest_remote_server, int rest_port) {
   port = rest_port;
 
 }
+
+#if defined(_ADAFRUIT_MQTT_FONA_H_)
+
+
+
+#endif
+
+#if defined(PubSubClient_h)
+
+// With default server
+eREST(PubSubClient& client) {
+
+  command = 'u';
+  pin_selected = false;
+
+  status_led_pin = 255;
+  state = 'u';
+
+  client.setServer(mqtt_server, 1883);
+
+}
+
+// With another server
+eREST(PubSubClient& client, char* new_mqtt_server) {
+
+  command = 'u';
+  pin_selected = false;
+
+  status_led_pin = 255;
+  state = 'u';
+
+  setMQTTServer(new_mqtt_server);
+  client.setServer(new_mqtt_server, 1883);
+
+}
+
+// Get topic
+char* get_topic() {
+  return out_topic;
+}
+
+// Subscribe to events
+void subscribe(String device, String eventName) {
+
+  // Build topic
+  String topic = device + "_" + eventName + "_in";
+
+  // Subscribe
+  char charBuf[50];
+  topic.toCharArray(charBuf, 50);
+
+  subscriptions_names[subscriptions_index] = charBuf;
+  subscriptions_index++;
+
+}
+
+// Publish to cloud
+template <typename T>
+void publish(PubSubClient& client, String eventName, T data) {
+
+  // Get event data
+  if (DEBUG_MODE) {
+    Serial.print("Publishing event " + eventName + " with data: ");
+    Serial.println(data);
+  }
+
+  // Build message
+  String message = "{\"client_id\": \"" + String(id) + "\", \"event_name\": \"" + eventName + "\", \"data\": \"" + String(data) + "\"}";
+
+  if (DEBUG_MODE) {
+    Serial.print("Sending message via MQTT: ");
+    Serial.println(message);
+  }
+
+  // Convert
+  char charBuf[100];
+  message.toCharArray(charBuf, 100);
+
+  // Publish
+  client.publish(publish_topic, charBuf);
+
+}
+
+#endif
 
 // Set status LED
 void set_status_led(uint8_t pin){
@@ -191,8 +293,111 @@ void reset_status() {
 
 }
 
+// Handle request with the Adafruit CC3000 WiFi library
+#ifdef ADAFRUIT_CC3000_H
+void handle(Adafruit_CC3000_ClientRef& client) {
+
+  if (client.available()) {
+
+    // Handle request
+    handle_proto(client,true,0);
+
+    // Answer
+    sendBuffer(client,32,20);
+    client.stop();
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(Adafruit_CC3000_ClientRef& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+// Handle request with the Arduino Yun
+#elif defined(_YUN_CLIENT_H_)
+void handle(YunClient& client) {
+
+  if (client.available()) {
+
+    // Handle request
+    handle_proto(client,false,0);
+
+    // Answer
+    sendBuffer(client,25,10);
+    client.stop();
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(YunClient& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+// Handle request with the Adafruit BLE board
+#elif defined(_ADAFRUIT_BLE_UART_H_)
+void handle(Adafruit_BLE_UART& serial) {
+
+  if (serial.available()) {
+
+    // Handle request
+    handle_proto(serial,false,0);
+
+    // Answer
+    sendBuffer(serial,100,1);
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(Adafruit_BLE_UART& serial, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+// Handle request for the Arduino Ethernet shield
+#elif defined(ethernet_h)
+void handle(EthernetClient& client){
+
+  if (client.available()) {
+
+    // Handle request
+    handle_proto(client,true,0);
+
+    // Answer
+    sendBuffer(client,50,0);
+    client.stop();
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(EthernetClient& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
 // Handle request for the ESP8266 chip
-#ifdef ESP8266
+#elif defined(ESP8266)
 void handle(WiFiClient& client){
 
   if (DEBUG_MODE) {
@@ -227,6 +432,136 @@ void handle(WiFiClient& client){
   }
 }
 
+template <typename T>
+void publish(WiFiClient& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+// Handle request for the Arduino MKR1000 board
+#elif defined(WIFI_H)
+void handle(WiFiClient& client){
+
+  if (client.available()) {
+
+    if (DEBUG_MODE) {Serial.println("Request received");}
+
+    // Handle request
+    handle_proto(client,true,0);
+
+    // Answer
+    sendBuffer(client,0,0);
+    client.stop();
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+// Handle request for the Arduino WiFi shield
+#elif defined(WiFi_h)
+void handle(WiFiClient& client){
+
+  if (client.available()) {
+
+    if (DEBUG_MODE) {Serial.println("Request received");}
+
+    // Handle request
+    handle_proto(client,true,0);
+
+    // Answer
+    sendBuffer(client,50,1);
+    client.stop();
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(WiFiClient& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+#elif defined(CORE_TEENSY)
+// Handle request on the Serial port
+void handle(usb_serial_class& serial){
+
+  if (serial.available()) {
+
+    // Handle request
+    handle_proto(serial,false,1);
+
+    // Answer
+    sendBuffer(serial,25,1);
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(usb_serial_class& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+#elif defined(__AVR_ATmega32U4__)
+// Handle request on the Serial port
+void handle(Serial_& serial){
+
+  if (serial.available()) {
+
+    // Handle request
+    handle_proto(serial,false,1);
+
+    // Answer
+    sendBuffer(serial,25,1);
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(Serial_& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
+
+#else
+// Handle request on the Serial port
+void handle(HardwareSerial& serial){
+
+  if (serial.available()) {
+
+    // Handle request
+    handle_proto(serial,false,1);
+
+    // Answer
+    sendBuffer(serial,25,1);
+
+    // Reset variables for the next command
+    reset_status();
+  }
+}
+
+template <typename T>
+void publish(HardwareSerial& client, String eventName, T value) {
+
+  // Publish request
+  publish_proto(client, eventName, value);
+
+}
 #endif
 
 void handle(char * string) {
@@ -279,6 +614,124 @@ void publish_proto(T& client, String eventName, V value) {
 
 }
 
+template <typename T>
+void handle_proto(T& serial, bool headers, uint8_t read_delay)
+{
+
+  // Check if there is data available to read
+  while (serial.available()) {
+
+    // Get the server answer
+    char c = serial.read();
+    delay(read_delay);
+    answer = answer + c;
+    //if (DEBUG_MODE) {Serial.print(c);}
+
+    // Process data
+    process(c);
+
+   }
+
+   // Send command
+   send_command(headers);
+}
+
+#if defined(PubSubClient_h)
+
+// Process callback
+void handle_callback(PubSubClient& client, char* topic, byte* payload, unsigned int length) {
+
+  // Process received message
+  int i;
+  char mqtt_msg[100];
+  for(i = 0; i < length; i++) {
+    mqtt_msg[i] = payload[i];
+  }
+  mqtt_msg[i] = '\0';
+  String msgString = String(mqtt_msg);
+
+  if (DEBUG_MODE) {
+    Serial.print("Received message via MQTT: ");
+    Serial.println(msgString);
+  }
+
+  // Process aREST commands
+    String modified_message = String(msgString) + " /";
+    char char_message[100];
+    modified_message.toCharArray(char_message, 100);
+
+    // Handle command with aREST
+    handle(char_message);
+
+    // Read answer
+    char * answer = getBuffer();
+
+    // Send response
+    if (DEBUG_MODE) {
+      Serial.print("Sending message via MQTT: ");
+      Serial.println(answer);
+    }
+    client.publish(out_topic, answer);
+    resetBuffer();
+
+
+}
+
+// Handle request on the Serial port
+void loop(PubSubClient& client){
+
+  // Connect to cloud
+  if (!client.connected()) {
+    reconnect(client);
+  }
+  client.loop();
+
+}
+
+void handle(PubSubClient& client){
+
+  // Connect to cloud
+  if (!client.connected()) {
+    reconnect(client);
+  }
+  client.loop();
+
+}
+
+void reconnect(PubSubClient& client) {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print(F("Attempting MQTT connection..."));
+
+    // Attempt to connect
+    if (client.connect(id)) {
+      Serial.println(F("Connected to aREST.io"));
+      client.subscribe(in_topic);
+
+      // Subscribe to all
+      if (subscriptions_index > 0) {
+
+        for (int i = 0; i < subscriptions_index; i++) {
+          if (DEBUG_MODE) {
+            Serial.print(F("Subscribing to additional topic: "));
+            Serial.println(subscriptions_names[i]);
+          }
+
+          client.subscribe(subscriptions_names[i]);
+        }
+
+      }
+
+    } else {
+      Serial.print(F("failed, rc="));
+      Serial.print(client.state());
+      Serial.println(F(" try again in 5 seconds"));
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+#endif
 
 void process(char c){
 
@@ -512,8 +965,10 @@ bool send_command(bool headers) {
    if (command == 'm'){
 
      // Send feedback to client
+     if (!LIGHTWEIGHT){
        addToBuffer(F("{\"message\": \"Pin D"));
        addToBuffer(pin);
+     }
 
      // Input
      if (state == 'i'){
@@ -522,7 +977,7 @@ bool send_command(bool headers) {
       pinMode(pin,INPUT);
 
       // Send feedback to client
-      addToBuffer(F(" set to input\", "));}
+      if (!LIGHTWEIGHT){addToBuffer(F(" set to input\", "));}
      }
 
      // Output
@@ -532,7 +987,7 @@ bool send_command(bool headers) {
        pinMode(pin,OUTPUT);
 
        // Send feedback to client
-       addToBuffer(F(" set to output\", "));
+       if (!LIGHTWEIGHT){addToBuffer(F(" set to output\", "));}
      }
 
    }
@@ -555,7 +1010,7 @@ bool send_command(bool headers) {
 
      #if !defined(__AVR_ATmega32U4__) || !defined(ADAFRUIT_CC3000_H)
      if (state == 'a') {
-       addToBuffer(F("{"));
+       if (!LIGHTWEIGHT) {addToBuffer(F("{"));}
 
        for (uint8_t i = 0; i < NUMBER_DIGITAL_PINS; i++) {
 
@@ -563,11 +1018,17 @@ bool send_command(bool headers) {
          value = digitalRead(i);
 
          // Send feedback to client
+         if (LIGHTWEIGHT){
+           addToBuffer(value);
+           addToBuffer(F(","));
+         }
+         else {
            addToBuffer(F("\"D"));
            addToBuffer(i);
            addToBuffer(F("\": "));
            addToBuffer(value);
            addToBuffer(F(", "));
+         }
      }
     }
     #endif
@@ -583,13 +1044,13 @@ bool send_command(bool headers) {
        digitalWrite(pin,value);
 
        // Send feedback to client
-      
+       if (!LIGHTWEIGHT){
         addToBuffer(F("{\"message\": \"Pin D"));
         addToBuffer(pin);
         addToBuffer(F(" set to "));
         addToBuffer(value);
         addToBuffer(F("\", "));
-
+       }
      }
    }
 
@@ -601,14 +1062,16 @@ bool send_command(bool headers) {
        value = analogRead(pin);
 
        // Send feedback to client
-       
+       if (LIGHTWEIGHT){addToBuffer(value);}
+       else {
         addToBuffer(F("{\"return_value\": "));
         addToBuffer(value);
         addToBuffer(F(", "));
+       }
      }
      #if !defined(__AVR_ATmega32U4__)
      if (state == 'a') {
-       addToBuffer(F("{"));
+       if (!LIGHTWEIGHT) {addToBuffer(F("{"));}
 
        for (uint8_t i = 0; i < NUMBER_ANALOG_PINS; i++) {
 
@@ -616,13 +1079,17 @@ bool send_command(bool headers) {
          value = analogRead(i);
 
          // Send feedback to client
-        
+         if (LIGHTWEIGHT){
+           addToBuffer(value);
+           addToBuffer(F(","));
+         }
+         else {
            addToBuffer(F("\"A"));
            addToBuffer(i);
            addToBuffer(F("\": "));
            addToBuffer(value);
            addToBuffer(F(", "));
-
+         }
      }
    }
    #endif
@@ -645,13 +1112,14 @@ bool send_command(bool headers) {
   if (command == 'v') {
 
        // Send feedback to client
-  
+       if (LIGHTWEIGHT){addToBuffer(*int_variables[value]);}
+       else {
         addToBuffer(F("{\""));
         addToBuffer(int_variables_names[value]);
         addToBuffer(F("\": "));
         addToBuffer(*int_variables[value]);
         addToBuffer(F(", "));
-
+       }
   }
 
   // Float ariable selected (Mega only)
@@ -659,13 +1127,14 @@ bool send_command(bool headers) {
   if (command == 'l') {
 
        // Send feedback to client
-
+       if (LIGHTWEIGHT){addToBuffer(*float_variables[value]);}
+       else {
         addToBuffer(F("{\""));
         addToBuffer(float_variables_names[value]);
         addToBuffer(F("\": "));
         addToBuffer(*float_variables[value]);
         addToBuffer(F(", "));
-
+       }
   }
   #endif
 
@@ -674,13 +1143,14 @@ bool send_command(bool headers) {
   if (command == 's') {
 
        // Send feedback to client
-
+       if (LIGHTWEIGHT){addToBuffer(*string_variables[value]);}
+       else {
         addToBuffer(F("{\""));
         addToBuffer(string_variables_names[value]);
         addToBuffer(F("\": \""));
         addToBuffer(*string_variables[value]);
         addToBuffer(F("\", "));
-
+       }
   }
   #endif
 
@@ -691,14 +1161,14 @@ bool send_command(bool headers) {
     uint8_t result = functions[value](arguments);
 
     // Send feedback to client
-
+    if (!LIGHTWEIGHT) {
      addToBuffer(F("{\"return_value\": "));
      addToBuffer(result);
      addToBuffer(F(", "));
      //addToBuffer(F(", \"message\": \""));
      //addToBuffer(functions_names[value]);
      //addToBuffer(F(" executed\", "));
-
+    }
   }
 
   if (command == 'r' || command == 'u') {
@@ -706,13 +1176,18 @@ bool send_command(bool headers) {
   }
 
   if (command == 'i') {
-
+    if (LIGHTWEIGHT) {addToBuffer(id);}
+    else {
       addToBuffer(F("{"));
-
+    }
   }
 
    // End of message
-  
+   if (LIGHTWEIGHT){
+     addToBuffer(F("\r\n"));
+   }
+
+   else {
 
      if (command != 'r' && command != 'u') {
        addToBuffer(F("\"id\": \""));
@@ -725,7 +1200,7 @@ bool send_command(bool headers) {
        #endif
        addToBuffer(F("\", \"connected\": true}\r\n"));
      }
-
+   }
 
    if (DEBUG_MODE) {
      #if defined(ESP8266)
@@ -751,14 +1226,13 @@ virtual void root_answer() {
     #endif
   #endif
 
-  
-  
-
+  if (LIGHTWEIGHT) {addToBuffer(id);}
+  else {
 
     // Start
     addToBuffer(F("{\"variables\": {"));
 
-    #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266)
+    #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
 
     // Int variables
     if (variables_index == 0 && string_variables_index == 0 && float_variables_index == 0){
@@ -828,13 +1302,17 @@ virtual void root_answer() {
     }
     #endif
 
-  
+  }
 
   // End
   addToBuffer(F("\"id\": \""));
   addToBuffer(id);
   addToBuffer(F("\", \"name\": \""));
   addToBuffer(name);
+  #if !defined(PubSubClient_h)
+  addToBuffer(F("\", \"hardware\": \""));
+  addToBuffer(HARDWARE);
+  #endif
   addToBuffer(F("\", \"connected\": true}\r\n"));
 }
 
@@ -847,7 +1325,7 @@ void variable(char * variable_name, int *variable){
 }
 
 // Float variables (Mega & ESP only, or without CC3000)
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) ||
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
 void variable(char * variable_name, float *variable){
 
   float_variables[float_variables_index] = variable;
@@ -858,7 +1336,7 @@ void variable(char * variable_name, float *variable){
 #endif
 
 // String variables (Mega & ESP only, or without CC3000)
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) 
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
 void variable(char * variable_name, String *variable){
 
   string_variables[string_variables_index] = variable;
@@ -879,6 +1357,17 @@ void function(char * function_name, int (*f)(String)){
 void set_id(char *device_id){
 
   strncpy(id,device_id, ID_SIZE);
+
+  #if defined(PubSubClient_h)
+  strcpy(in_topic, id);
+  strcat(in_topic, "_in");
+
+  strcpy(out_topic, id);
+  strcat(out_topic, "_out");
+
+  strcpy(publish_topic, id);
+  strcat(publish_topic, "_publish");
+  #endif
 
 }
 
@@ -928,7 +1417,7 @@ void addToBuffer(char * toAdd){
 }
 
 // Add to output buffer
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266)
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
 void addToBuffer(String toAdd){
 
   if (DEBUG_MODE) {
@@ -967,7 +1456,7 @@ void addToBuffer(int toAdd){
 }
 
 // Add to output buffer (Mega & ESP only)
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) 
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
 void addToBuffer(float toAdd){
 
   char number[10];
@@ -1034,8 +1523,11 @@ void sendBuffer(T& client, uint8_t chunkSize, uint8_t wait_time) {
       intermediate_buffer[chunkSize] = '\0';
 
       // Send intermediate buffer
-  
+      #ifdef ADAFRUIT_CC3000_H
+      client.fastrprint(intermediate_buffer);
+      #else
       client.print(intermediate_buffer);
+      #endif
 
       // Wait for client to get data
       delay(wait_time);
@@ -1089,6 +1581,11 @@ void initFreeMemory(){
 }
 #endif
 
+#if defined(PubSubClient_h)
+void setMQTTServer(char* new_mqtt_server){
+  mqtt_server = new_mqtt_server;
+}
+#endif
 
 private:
   String answer;
@@ -1117,6 +1614,21 @@ private:
   int * int_variables[NUMBER_VARIABLES];
   char * int_variables_names[NUMBER_VARIABLES];
 
+  // MQTT client
+  #if defined(PubSubClient_h)
+
+  // Topics
+  char in_topic[ID_SIZE+5];
+  char out_topic[ID_SIZE+5];
+  char publish_topic[ID_SIZE+7];
+
+  // Subscribe topics & handlers
+  uint8_t subscriptions_index;
+  char * subscriptions_names[NUMBER_SUBSCRIPTIONS];
+
+  // aREST.io server
+  char* mqtt_server = "45.55.79.41";
+  #endif
 
   // Float variables arrays (Mega & ESP8266 only)
   #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(ESP8266) || defined(CORE_WILDFIRE) || !defined(ADAFRUIT_CC3000_H)
